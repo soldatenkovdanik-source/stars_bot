@@ -55,7 +55,6 @@ async def init_db(bot=None):
             )
         ''')
 
-        # Добавляем обязательные каналы
         cursor = await db.execute("SELECT COUNT(*) FROM required_channels")
         count = (await cursor.fetchone())[0]
         if count == 0:
@@ -77,7 +76,6 @@ async def init_db(bot=None):
             await db.commit()
             print(f"✅ Добавлены обязательные каналы из config.py")
 
-        # Добавляем элементы для ускорения
         cursor = await db.execute("SELECT COUNT(*) FROM boost_items")
         count = (await cursor.fetchone())[0]
         if count == 0:
@@ -101,14 +99,15 @@ async def get_user(user_id):
 
 async def create_user(user_id, username, referrer_id=None):
     async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
-        if await cursor.fetchone():
-            return
+        # Вставляем или игнорируем, если уже существует
         await db.execute(
-            "INSERT INTO users (user_id, username, referrer_id, mining_start, is_verified) VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO users (user_id, username, referrer_id, mining_start, is_verified) VALUES (?, ?, ?, ?, ?)",
             (user_id, username, referrer_id, datetime.now().timestamp(), 0)
         )
-        if referrer_id:
+        # Проверяем, был ли вставлен новый пользователь
+        cursor = await db.execute("SELECT changes()")
+        changes = (await cursor.fetchone())[0]
+        if changes > 0 and referrer_id:
             await db.execute("UPDATE users SET speed = speed + 0.1 WHERE user_id = ?", (referrer_id,))
             await db.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)", (referrer_id, user_id))
         await db.commit()
