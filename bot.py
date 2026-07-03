@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import os
 from datetime import datetime
 import aiosqlite
+from aiohttp import web
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -17,6 +19,23 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 user_withdraw_state = {}
+
+# ========== ВЕБ-СЕРВЕР ДЛЯ RENDER ==========
+
+async def health_check(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get('PORT', 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"✅ Веб-сервер запущен на порту {port}")
+
+# ========== ОСТАЛЬНЫЕ ФУНКЦИИ (ваш старый код) ==========
 
 def format_balance(balance):
     return f"{balance:.4f}"
@@ -51,7 +70,6 @@ async def handle_join_request(update: types.ChatJoinRequest):
     user_id = update.from_user.id
     chat_id = update.chat.id
 
-    # Проверяем, является ли этот канал обязательным (REQUIRED_CHANNELS)
     required_channels = await get_required_channels()
     for ch_id, channel_id, invite_link, title in required_channels:
         if channel_id == chat_id:
@@ -60,7 +78,6 @@ async def handle_join_request(update: types.ChatJoinRequest):
                 await complete_task(user_id, task_type)
                 print(f"✅ Задание {task_type} выполнено для {user_id} (подана заявка)")
             
-            # Проверяем, все ли обязательные каналы пройдены
             all_done = True
             for ch_id2, channel_id2, _, _ in required_channels:
                 task_type2 = f"required_{ch_id2}"
@@ -76,7 +93,6 @@ async def handle_join_request(update: types.ChatJoinRequest):
                 )
             break
 
-    # Проверяем, является ли этот канал каналом для ускорения (BOOST_ITEMS)
     boost_items = await get_boost_items()
     for item_id, item_type, link, channel_id, title in boost_items:
         if item_type == "channel" and channel_id == chat_id:
@@ -298,11 +314,9 @@ async def check_boost(callback: types.CallbackQuery):
             continue
 
         if item_type == "bot":
-            # Бот — автоматически засчитываем
             await complete_task(user_id, task_type)
             print(f"✅ Задание для бота {title} выполнено для {user_id} (автоматически)")
         elif item_type == "channel":
-            # Канал — проверяем заявку
             if channel_id is None:
                 errors.append(f"❌ Неизвестный ID для канала {title}")
                 all_completed = False
@@ -448,6 +462,8 @@ async def mining_loop():
 async def main():
     await init_db(bot)
     print("🤖 Бот-майнер запущен!")
+    # Запускаем веб-сервер и майнинг в фоне
+    asyncio.create_task(start_web_server())
     asyncio.create_task(mining_loop())
     await dp.start_polling(bot)
 
