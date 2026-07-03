@@ -1,13 +1,13 @@
 import asyncio
 import logging
-import os
 from datetime import datetime
 import aiosqlite
-from aiohttp import web
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+from aiohttp import web
 
 from config import *
 from database import *
@@ -30,12 +30,11 @@ async def start_web_server():
     app.router.add_get('/', health_check)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.environ.get('PORT', 8080))
-    site = web.TCPSite(runner, '0.0.0.0', port)
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
     await site.start()
-    print(f"✅ Веб-сервер запущен на порту {port}")
+    print("✅ Веб-сервер запущен на порту 8080")
 
-# ========== ОСТАЛЬНЫЕ ФУНКЦИИ (ваш старый код) ==========
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
 def format_balance(balance):
     return f"{balance:.4f}"
@@ -62,6 +61,16 @@ async def get_main_menu_text(user_id):
         text += "Нажмите «Запустить майнер» чтобы начать майнить.\n"
     return text
 
+async def safe_edit_text(message, text, reply_markup=None, parse_mode=None):
+    """Безопасно редактирует сообщение, избегая ошибки 'message is not modified'"""
+    try:
+        await message.edit_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except Exception as e:
+        if "message is not modified" in str(e):
+            pass  # Игнорируем, если текст не изменился
+        else:
+            raise e
+
 # ========== ОБРАБОТЧИК ЗАЯВОК ==========
 
 @dp.chat_join_request()
@@ -70,6 +79,7 @@ async def handle_join_request(update: types.ChatJoinRequest):
     user_id = update.from_user.id
     chat_id = update.chat.id
 
+    # Проверяем обязательные каналы
     required_channels = await get_required_channels()
     for ch_id, channel_id, invite_link, title in required_channels:
         if channel_id == chat_id:
@@ -93,6 +103,7 @@ async def handle_join_request(update: types.ChatJoinRequest):
                 )
             break
 
+    # Проверяем каналы для ускорения
     boost_items = await get_boost_items()
     for item_id, item_type, link, channel_id, title in boost_items:
         if item_type == "channel" and channel_id == chat_id:
@@ -153,19 +164,16 @@ async def check_required(callback: types.CallbackQuery):
         await set_verified(user_id)
         await callback.answer("✅ Все заявки поданы!", show_alert=True)
         text = await get_main_menu_text(user_id)
-        await callback.message.edit_text(
-            text,
-            parse_mode=None,
-            reply_markup=main_menu(await is_mining(user_id))
-        )
+        await safe_edit_text(callback.message, text, main_menu(await is_mining(user_id)), parse_mode=None)
     else:
         error_text = "❌ Вы не подали заявки во все каналы.\n\n" + "\n".join(errors[:5])
-        await callback.message.edit_text(
+        await safe_edit_text(
+            callback.message,
             error_text,
-            parse_mode=None,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Проверить снова", callback_data="check_required")]
-            ])
+            ]),
+            parse_mode=None
         )
         await callback.answer()
 
@@ -217,11 +225,7 @@ async def start_command(message: types.Message):
 async def back_to_menu(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     text = await get_main_menu_text(user_id)
-    await callback.message.edit_text(
-        text,
-        parse_mode=None,
-        reply_markup=main_menu(await is_mining(user_id))
-    )
+    await safe_edit_text(callback.message, text, main_menu(await is_mining(user_id)), parse_mode=None)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "toggle_mining")
@@ -234,11 +238,7 @@ async def toggle_mining(callback: types.CallbackQuery):
         await start_mining(user_id)
         await callback.answer("▶️ Майнер запущен")
     text = await get_main_menu_text(user_id)
-    await callback.message.edit_text(
-        text,
-        parse_mode=None,
-        reply_markup=main_menu(await is_mining(user_id))
-    )
+    await safe_edit_text(callback.message, text, main_menu(await is_mining(user_id)), parse_mode=None)
 
 @dp.callback_query(lambda c: c.data == "refresh_balance")
 async def refresh_balance(callback: types.CallbackQuery):
@@ -246,11 +246,7 @@ async def refresh_balance(callback: types.CallbackQuery):
     balance = await get_balance(user_id)
     await callback.answer(f"💰 Твой баланс: {format_balance(balance)} 🥳", show_alert=True)
     text = await get_main_menu_text(user_id)
-    await callback.message.edit_text(
-        text,
-        parse_mode=None,
-        reply_markup=main_menu(await is_mining(user_id))
-    )
+    await safe_edit_text(callback.message, text, main_menu(await is_mining(user_id)), parse_mode=None)
 
 # ========== УСКОРЕНИЕ x2 ==========
 
@@ -263,10 +259,11 @@ async def boost_menu(callback: types.CallbackQuery):
 
     items = await get_boost_items()
     if not items:
-        await callback.message.edit_text(
+        await safe_edit_text(
+            callback.message,
             "❌ Нет доступных элементов для ускорения. Добавьте их в config.py (BOOST_ITEMS)",
-            parse_mode=None,
-            reply_markup=back_keyboard()
+            back_keyboard(),
+            parse_mode=None
         )
         await callback.answer()
         return
@@ -289,10 +286,11 @@ async def boost_menu(callback: types.CallbackQuery):
     keyboard.append([InlineKeyboardButton(text="🔄 Проверить", callback_data="check_boost")])
     keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")])
 
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         text,
-        parse_mode=None,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+        InlineKeyboardMarkup(inline_keyboard=keyboard),
+        parse_mode=None
     )
     await callback.answer()
 
@@ -340,20 +338,17 @@ async def check_boost(callback: types.CallbackQuery):
         await update_user_speed(user_id)
         await callback.answer("✅ Ускорение x2 активировано на 1 час!", show_alert=True)
         text = await get_main_menu_text(user_id)
-        await callback.message.edit_text(
-            text,
-            parse_mode=None,
-            reply_markup=main_menu(await is_mining(user_id))
-        )
+        await safe_edit_text(callback.message, text, main_menu(await is_mining(user_id)), parse_mode=None)
     else:
         error_text = "❌ Вы не выполнили все задания.\n\n" + "\n".join(errors[:5])
-        await callback.message.edit_text(
+        await safe_edit_text(
+            callback.message,
             error_text,
-            parse_mode=None,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Проверить снова", callback_data="check_boost")],
                 [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
-            ])
+            ]),
+            parse_mode=None
         )
         await callback.answer()
 
@@ -376,7 +371,7 @@ async def referral_menu(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="👥 Пригласить друга", url=f"https://t.me/share/url?url={ref_link}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")],
     ]
-    await callback.message.edit_text(text, parse_mode=None, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    await safe_edit_text(callback.message, text, InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode=None)
     await callback.answer()
 
 # ========== ВЫВОД ==========
@@ -387,7 +382,7 @@ async def withdraw_menu(callback: types.CallbackQuery):
     user_withdraw_state[user_id] = {"step": "awaiting_username"}
     text = "ВЫВОД ЗВЁЗД\n\nШаг 1/2 — на какой юзернейм вывести?\n\nОтправьте @username"
     keyboard = [[InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]]
-    await callback.message.edit_text(text, parse_mode=None, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    await safe_edit_text(callback.message, text, InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode=None)
     await callback.answer()
 
 @dp.message()
@@ -462,9 +457,8 @@ async def mining_loop():
 async def main():
     await init_db(bot)
     print("🤖 Бот-майнер запущен!")
-    # Запускаем веб-сервер и майнинг в фоне
-    asyncio.create_task(start_web_server())
     asyncio.create_task(mining_loop())
+    asyncio.create_task(start_web_server())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
