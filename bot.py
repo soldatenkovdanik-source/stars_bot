@@ -67,7 +67,7 @@ async def safe_edit_text(message, text, reply_markup=None, parse_mode=None):
         await message.edit_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     except Exception as e:
         if "message is not modified" in str(e):
-            pass  # Игнорируем, если текст не изменился
+            pass
         else:
             raise e
 
@@ -75,11 +75,9 @@ async def safe_edit_text(message, text, reply_markup=None, parse_mode=None):
 
 @dp.chat_join_request()
 async def handle_join_request(update: types.ChatJoinRequest):
-    """Бот видит заявку, засчитывает задание, НЕ уведомляет админа, НЕ одобряет"""
     user_id = update.from_user.id
     chat_id = update.chat.id
 
-    # Проверяем обязательные каналы
     required_channels = await get_required_channels()
     for ch_id, channel_id, invite_link, title in required_channels:
         if channel_id == chat_id:
@@ -103,7 +101,6 @@ async def handle_join_request(update: types.ChatJoinRequest):
                 )
             break
 
-    # Проверяем каналы для ускорения
     boost_items = await get_boost_items()
     for item_id, item_type, link, channel_id, title in boost_items:
         if item_type == "channel" and channel_id == chat_id:
@@ -147,6 +144,7 @@ async def show_required_channels(message: types.Message, user_id: int):
 
 @dp.callback_query(lambda c: c.data == "check_required")
 async def check_required(callback: types.CallbackQuery):
+    await callback.answer()  # <-- Сразу подтверждаем колбэк
     user_id = callback.from_user.id
     channels = await get_required_channels()
     all_completed = True
@@ -162,7 +160,6 @@ async def check_required(callback: types.CallbackQuery):
 
     if all_completed:
         await set_verified(user_id)
-        await callback.answer("✅ Все заявки поданы!", show_alert=True)
         text = await get_main_menu_text(user_id)
         await safe_edit_text(callback.message, text, main_menu(await is_mining(user_id)), parse_mode=None)
     else:
@@ -175,7 +172,6 @@ async def check_required(callback: types.CallbackQuery):
             ]),
             parse_mode=None
         )
-        await callback.answer()
 
 # ========== СТАРТ ==========
 
@@ -296,13 +292,13 @@ async def boost_menu(callback: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data == "check_boost")
 async def check_boost(callback: types.CallbackQuery):
+    await callback.answer()  # <-- Сразу подтверждаем
     user_id = callback.from_user.id
     items = await get_boost_items()
     
     if not items:
-        await callback.answer("❌ Нет элементов для ускорения", show_alert=True)
         return
-    
+
     all_completed = True
     errors = []
 
@@ -336,7 +332,6 @@ async def check_boost(callback: types.CallbackQuery):
     if all_completed:
         await set_boost(user_id, 1)
         await update_user_speed(user_id)
-        await callback.answer("✅ Ускорение x2 активировано на 1 час!", show_alert=True)
         text = await get_main_menu_text(user_id)
         await safe_edit_text(callback.message, text, main_menu(await is_mining(user_id)), parse_mode=None)
     else:
@@ -350,7 +345,6 @@ async def check_boost(callback: types.CallbackQuery):
             ]),
             parse_mode=None
         )
-        await callback.answer()
 
 # ========== РЕФЕРАЛКА ==========
 
